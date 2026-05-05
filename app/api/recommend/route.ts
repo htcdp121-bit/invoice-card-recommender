@@ -1,0 +1,56 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSupabase } from '@/lib/supabase/client';
+import { callGeminiRecommendation } from '@/lib/ai/gemini';
+import { localBacktest } from '@/lib/algo/backtest';
+import type { AggregatedInvoice, RecommendParams, CardRule, JobRecord } from '@/lib/types';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
+interface PostBody {
+  aggregated: AggregatedInvoice;
+  params: RecommendParams;
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = (await req.json()) as PostBody;
+    if (!body || !body.aggregated || !body.params) {
+      return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
+    }
+    const supabase = getServerSupabase();
+    const { data: cards, error: cardsError } = await supabase.from('card_rules').select('*');
+    if (cardsError) throw cardsError;
+    const cardRules = (cards || []) as CardRule[];
+
+    const jobId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const initialJob: JobRecord = {
+      id: jobId,
+      status: 'running',
+      params: body.params,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await supabase.from('jobs').insert(initialJob);
+
+    let result;
+    try {
+      result = await callGeminiRecommendation(body.aggregated, body.params, cardRules);
+    } catch (err) {
+      result = localBacktest(body.aggregated, body.params, cardRules);
+      result.disclaimer = (result.disclaimer || '') + ' (Gemini failure fallback)';
+    }
+    result.jobId = jobId;
+
+    await supabase
+      .from('jobs')
+      .update({ status: 'done', result, updatedAt: new Date().toISOString() })
+      .eq('id', jobId);
+
+    return NextResponse.json({ jobId, result }, { status: 200 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
