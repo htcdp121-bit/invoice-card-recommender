@@ -21,7 +21,16 @@ export async function POST(req: NextRequest) {
     const supabase = getServerSupabase();
     const { data: cards, error: cardsError } = await supabase.from('card_rules').select('*');
     if (cardsError) throw cardsError;
-    const cardRules = (cards || []) as CardRule[];
+    const cardRules = ((cards || []) as any[]).map((c) => ({
+      id: c.id,
+      name: c.name,
+      issuer: c.issuer,
+      annualFee: c.annual_fee ?? 0,
+      baseRewardRate: c.base_reward_rate ?? 0,
+      categoryBonuses: c.category_bonuses ?? [],
+      channelBonuses: c.channel_bonuses ?? [],
+      notes: c.notes,
+    })) as CardRule[];
 
     const jobId = crypto.randomUUID();
     const now = new Date().toISOString();
