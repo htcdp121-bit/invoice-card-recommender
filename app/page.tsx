@@ -1,13 +1,14 @@
 'use client';
 import { useState } from 'react';
-import ParameterForm, { UserParams } from '@/components/ParameterForm';
+import ParameterForm from '@/components/ParameterForm';
+import type { RecommendParams } from '@/lib/types';
 import InvoiceUploader from '@/components/InvoiceUploader';
 import ResultPanel from '@/components/ResultPanel';
 import LoadingPoller from '@/components/LoadingPoller';
 import type { AggregatedPayload, RecommendationResult } from '@/lib/types';
 
 export default function Page() {
-  const [params, setParams] = useState<UserParams>({ overseasYearly: 0, mobilePay: [] });
+  const [params, setParams] = useState<RecommendParams>({ annualFeeBudget: 0, maxCards: 5, horizonMonths: 12, includeForeign: false, riskAversion: 'mid' });
   const [aggregate, setAggregate] = useState<AggregatedPayload | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [result, setResult] = useState<RecommendationResult | null>(null);
