@@ -21,11 +21,11 @@ export default function Page() {
     const res = await fetch('/api/recommend', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ params, aggregate })
+      body: JSON.stringify({ params, aggregated: aggregate })
     });
     if (!res.ok) { setError('提交失敗，請稍後再試'); return; }
     const j = await res.json();
-    setJobId(j.jobId);
+    if (j.result) { setResult(j.result); } else if (j.jobId) { setJobId(j.jobId); }
   }
 
   return (
