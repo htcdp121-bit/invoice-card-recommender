@@ -5,11 +5,11 @@ import type { RecommendParams } from '@/lib/types';
 import InvoiceUploader from '@/components/InvoiceUploader';
 import ResultPanel from '@/components/ResultPanel';
 import LoadingPoller from '@/components/LoadingPoller';
-import type { AggregatedPayload, RecommendationResult } from '@/lib/types';
+import type { AggregatedInvoice, RecommendationResult } from '@/lib/types';
 
 export default function Page() {
   const [params, setParams] = useState<RecommendParams>({ annualFeeBudget: 0, maxCards: 5, horizonMonths: 12, includeForeign: false, riskAversion: 'mid' });
-  const [aggregate, setAggregate] = useState<AggregatedPayload | null>(null);
+  const [aggregate, setAggregate] = useState<AggregatedInvoice | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [result, setResult] = useState<RecommendationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +35,7 @@ export default function Page() {
         <p className="text-slate-600 mt-2">上傳發票 → 前端雜湊去識別化 → AI 邊際回測 → 推薦 5 張卡組合。</p>
       </header>
 
-      <ParameterForm value={params} onChange={setParams} />
+      <ParameterForm onSubmit={setParams} disabled={!aggregate} />
       <InvoiceUploader onAggregated={setAggregate} />
 
       <button
