@@ -36,7 +36,7 @@ export default function Page() {
       </header>
 
       <ParameterForm onSubmit={setParams} disabled={!aggregate} />
-      <InvoiceUploader onAggregated={setAggregate} />
+      <InvoiceUploader onParsed={setAggregate} />
 
       <button
         onClick={handleRun}
@@ -47,7 +47,7 @@ export default function Page() {
       </button>
 
       {error && <p className="text-red-600">{error}</p>}
-      {jobId && !result && <LoadingPoller jobId={jobId} onDone={setResult} onError={setError} />}
+      {jobId && !result && <LoadingPoller jobId={jobId} onDone={(job) => { if (job.result) setResult(job.result); if (job.error) setError(job.error); }} />}
       {result && <ResultPanel result={result} />}
 
       <footer className="text-xs text-slate-500 text-center pt-10">
