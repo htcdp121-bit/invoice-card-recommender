@@ -13,7 +13,7 @@ import { greedyMarginalSelect, evaluateCombo } from './marginal';
  * - 先以 greedy 找到最佳組合；
  * - 若仍為空，退而以「淸年化回饋最高且非負」的零年費卡作為保底；
  * - 仍找不到則以任意卡作保底。
- * 輸出結構依循新版 RecommendedCard（由式包括 name/issuer/annualFee以及個人化原因）。
+ * 輸出結構依循新版 RecommendedCard（含 name/issuer/annualFee 以及個人化原因）。
  */
 export function localBacktest(
   agg: AggregatedInvoice,
@@ -33,14 +33,17 @@ export function localBacktest(
     params.annualFeeBudget,
   );
 
-  // 將 greedyMarginalSelect 回傳的簡易 cards 轉換為 RecommendedCard
   const topCategories = (agg.categories || [])
     .slice(0, 3)
     .map((c) => `${c.category}(每月 NTD ${Math.round(c.monthlyAvg).toLocaleString('en-US')})`)
     .join('、');
 
-  const enrichOne = (id: string, name: string, issuer: string): RecommendedCard => {
-    const rule = cards.find((c) => c.id === id);
+  const enrichOne = (
+    id: string | undefined,
+    name: string,
+    issuer: string,
+  ): RecommendedCard => {
+    const rule = id ? cards.find((c) => c.id === id) : undefined;
     return {
       id,
       name,
@@ -68,7 +71,6 @@ export function localBacktest(
     warnings: top.combination.warnings,
   };
 
-  // 保底：greedy 回空集合時挑一張「淸回饋最佳且年費合預算」的卡
   if (combination.cards.length === 0 && filtered.length > 0) {
     const budget = params.annualFeeBudget;
     const annualFactor = 12 / Math.max(params.horizonMonths, 1);
