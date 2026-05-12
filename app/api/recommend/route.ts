@@ -40,7 +40,6 @@ export async function POST(req: NextRequest) {
       channelBonuses: c.channel_bonuses ?? [],
       notes: c.notes,
     })) as CardRule[];
-
     console.log('[recommend] cards loaded:', cardRules.length);
 
     const jobId = crypto.randomUUID();
@@ -54,22 +53,23 @@ export async function POST(req: NextRequest) {
     };
     await supabase.from('jobs').insert(initialJob);
 
-    let result;
+    let result: any;
     let fallbackReason: string | null = null;
     try {
       result = await callGeminiRecommendation(body.aggregated, body.params, cardRules);
+      result.source = 'gemini';
     } catch (err) {
       fallbackReason = err instanceof Error ? err.message : String(err);
       console.error('[recommend] Falling back to localBacktest. reason:', fallbackReason);
       result = localBacktest(body.aggregated, body.params, cardRules);
       result.disclaimer =
         (result.disclaimer || '') +
-        ' （AI 推薦不可用，本次以本地保底邏輯產出；原因：' +
+        ' （AI 推薦不可用，本次以本地保底邊際貢獻回測產出；原因：' +
         fallbackReason +
         '）';
-      (result as any).source = 'fallback';
+      result.source = 'fallback';
     }
-    if (fallbackReason === null) (result as any).source = 'gemini';
+
     result.jobId = jobId;
 
     await supabase
