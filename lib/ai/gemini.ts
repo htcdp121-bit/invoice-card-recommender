@@ -8,28 +8,17 @@ import type {
 import { buildSystemPrompt, buildUserPrompt } from './prompts';
 
 /**
- * 模型備選順序：考慮 free-tier RPM/RPD 與 503 的能邱性，依序嘗試，
- * 遇到 429/503 會随機退讓到下一個模型。可透過 GEMINI_MODEL 環境變數見位這個順序之首。
+ * 備選模型清單：限為 2 個以內，以免 Vercel Hobby 計畫 60s timeout 被追梳。
  */
 function modelCandidates(): string[] {
   const env = process.env.GEMINI_MODEL;
-  const base = [
-    'gemini-2.5-flash',
-    'gemini-flash-latest',
-    'gemini-2.5-flash-lite',
-  ];
-  if (env && !base.includes(env)) return [env, ...base];
-  if (env) return [env, ...base.filter((m) => m !== env)];
-  return base;
-}
-
-async function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+  if (env) return [env, 'gemini-flash-latest'].filter((v, i, a) => a.indexOf(v) === i).slice(0, 2);
+  return ['gemini-2.5-flash', 'gemini-flash-latest'];
 }
 
 /**
  * 以 Google Search grounding 呼叫 Gemini，讓模型即時查詢台灣信用卡實際優惠。
- * 使用模型備選順序 + 重試以避免單一模型被 quota/overload 阫住。
+ * 為避免 Vercel function 超時，最多嘗試 2 個模型，每個 1 次；重試限制在 timeout 內完成。
  */
 export async function callGeminiRecommendation(
   agg: AggregatedInvoice,
@@ -50,79 +39,75 @@ export async function callGeminiRecommendation(
   let lastErr: unknown = new Error('No model attempted');
   for (let i = 0; i < candidates.length; i++) {
     const modelName = candidates[i];
-    const model = genAI.getGenerativeModel({
-      model: modelName,
-      systemInstruction: buildSystemPrompt(),
-      generationConfig: { temperature: 0.4 },
-      tools: [{ googleSearch: {} } as any],
-    });
+    try {
+      console.log(`[gemini] try ${modelName}`);
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction: buildSystemPrompt(),
+        generationConfig: { temperature: 0.4 },
+        tools: [{ googleSearch: {} } as any],
+      });
+      const response: any = await model.generateContent(userPrompt);
+      const raw: string = response.response.text();
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+      const sources: Array<{ title?: string; uri?: string }> = [];
       try {
-        console.log(`[gemini] try ${modelName} attempt#${attempt + 1}`);
-        const response: any = await model.generateContent(userPrompt);
-        const raw: string = response.response.text();
-
-        const sources: Array<{ title?: string; uri?: string }> = [];
-        try {
-          const cand = response.response?.candidates || [];
-          const meta = cand[0]?.groundingMetadata;
-          const chunks = meta?.groundingChunks || [];
-          for (const ch of chunks) {
-            const web = ch.web;
-            if (web?.uri) sources.push({ title: web.title, uri: web.uri });
-          }
-        } catch (e) {
-          console.warn('[gemini] grounding metadata parse failed:', e);
+        const cand = response.response?.candidates || [];
+        const meta = cand[0]?.groundingMetadata;
+        const chunks = meta?.groundingChunks || [];
+        for (const ch of chunks) {
+          const web = ch.web;
+          if (web?.uri) sources.push({ title: web.title, uri: web.uri });
         }
-
-        const json = extractJson(raw);
-        if (!json) {
-          console.error('[gemini] No JSON found. raw head:', raw.slice(0, 300));
-          throw new Error('Gemini response did not contain JSON');
-        }
-        let parsed: any;
-        try {
-          parsed = JSON.parse(json);
-        } catch (e) {
-          console.error('[gemini] JSON parse failed. head:', json.slice(0, 300));
-          throw new Error(
-            'Gemini response JSON parse failed: ' +
-              (e instanceof Error ? e.message : String(e)),
-          );
-        }
-        if (!parsed.combinations || !Array.isArray(parsed.combinations)) {
-          console.error(
-            '[gemini] Missing combinations array. keys:',
-            Object.keys(parsed || {}),
-          );
-          throw new Error('Gemini response missing combinations array');
-        }
-        console.log(
-          '[gemini] success model=',
-          modelName,
-          'combos=',
-          parsed.combinations.length,
-          'sources=',
-          sources.length,
-        );
-        return {
-          combinations: parsed.combinations,
-          disclaimer: parsed.disclaimer,
-          sources,
-          generatedAt: new Date().toISOString(),
-        } as RecommendationResult;
       } catch (e) {
-        lastErr = e;
-        const msg = e instanceof Error ? e.message : String(e);
-        const isRateLimit = /429|503|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(msg);
-        console.error(
-          `[gemini] ${modelName} attempt#${attempt + 1} failed (rateLimit=${isRateLimit}):`,
-          msg.slice(0, 200),
-        );
-        if (!isRateLimit) break; // 非限流錯誤不重試，換下一個模型
-        if (attempt === 0) await sleep(1500); // 1.5s 后重試同一模型一次
+        console.warn('[gemini] grounding metadata parse failed:', e);
       }
+
+      const json = extractJson(raw);
+      if (!json) {
+        console.error('[gemini] No JSON found. raw head:', raw.slice(0, 300));
+        throw new Error('Gemini response did not contain JSON');
+      }
+      let parsed: any;
+      try {
+        parsed = JSON.parse(json);
+      } catch (e) {
+        console.error('[gemini] JSON parse failed. head:', json.slice(0, 300));
+        throw new Error(
+          'Gemini response JSON parse failed: ' +
+            (e instanceof Error ? e.message : String(e)),
+        );
+      }
+      if (!parsed.combinations || !Array.isArray(parsed.combinations)) {
+        console.error(
+          '[gemini] Missing combinations array. keys:',
+          Object.keys(parsed || {}),
+        );
+        throw new Error('Gemini response missing combinations array');
+      }
+      console.log(
+        '[gemini] success model=',
+        modelName,
+        'combos=',
+        parsed.combinations.length,
+        'sources=',
+        sources.length,
+      );
+      return {
+        combinations: parsed.combinations,
+        disclaimer: parsed.disclaimer,
+        sources,
+        generatedAt: new Date().toISOString(),
+      } as RecommendationResult;
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      const isTransient = /429|503|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(msg);
+      console.error(
+        `[gemini] ${modelName} failed (transient=${isTransient}):`,
+        msg.slice(0, 200),
+      );
+      if (!isTransient) break; // 非短暫錯誤不換模型
     }
   }
 
@@ -130,9 +115,6 @@ export async function callGeminiRecommendation(
   throw new Error('Gemini call failed (all candidates): ' + msg);
 }
 
-/**
- * 從模型回覆中抽取 JSON。支援 純JSON / \`\`\`json包裹 / 夾雜中間。
- */
 function extractJson(text: string): string | null {
   if (!text) return null;
   const trimmed = text.trim();
