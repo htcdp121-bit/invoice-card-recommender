@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/client';
 import { callGeminiRecommendation } from '@/lib/ai/gemini';
 import { localBacktest } from '@/lib/algo/backtest';
+import { overrideUrlsWithSources } from '@/lib/ai/url-pick';
+import { verifyAndFallbackUrls } from '@/lib/ai/url-verify';
 import type {
   AggregatedInvoice,
   RecommendParams,
   CardRule,
   JobRecord,
+  RecommendedCard,
 } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -25,11 +28,11 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = getServerSupabase();
+
     const { data: cards, error: cardsError } = await supabase
       .from('card_rules')
       .select('*');
     if (cardsError) throw cardsError;
-
     const cardRules = ((cards || []) as any[]).map((c) => ({
       id: c.id,
       name: c.name,
@@ -70,8 +73,37 @@ export async function POST(req: NextRequest) {
       result.source = 'fallback';
     }
 
-    result.jobId = jobId;
+    // ====== URL 反幻覺三層處理（AI 推薦才需要） ======
+    if (result.source === 'gemini' && Array.isArray(result.combinations)) {
+      const sources = (result.sources || []) as Array<{ title?: string; uri?: string }>;
+      let totalOverride = 0;
+      const verifyStats: Array<{ ok: number; fb: number; nu: number }> = [];
 
+      for (const combo of result.combinations) {
+        if (!Array.isArray(combo.cards)) continue;
+
+        // C 層：用 grounding sources 蓋寫 AI 給的 URL
+        const picked = overrideUrlsWithSources(combo.cards as RecommendedCard[], sources);
+        totalOverride += picked.overrideCount;
+
+        // B 層：對覆蓋後的 URL 做 HEAD 驗證 + 銀行總覽頁 fallback
+        const verified = await verifyAndFallbackUrls(picked.cards);
+        combo.cards = verified.cards;
+        verifyStats.push({
+          ok: verified.stats.okCount,
+          fb: verified.stats.fallbackCount,
+          nu: verified.stats.nullCount,
+        });
+      }
+      console.log(
+        '[recommend] url-pipeline override=',
+        totalOverride,
+        ' verifyStats=',
+        JSON.stringify(verifyStats),
+      );
+    }
+
+    result.jobId = jobId;
     await supabase
       .from('jobs')
       .update({ status: 'done', result, updatedAt: new Date().toISOString() })
