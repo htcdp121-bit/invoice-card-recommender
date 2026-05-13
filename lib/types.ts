@@ -1,4 +1,5 @@
 // 全局型別定義
+
 export interface RecommendParams {
   annualFeeBudget: number;
   maxCards: number;
@@ -17,8 +18,7 @@ export interface RawInvoiceRow {
   channel?: 'online' | 'pos' | 'foreign' | 'unknown';
 }
 
-export interface HashedInvoiceRow
-  extends Omit<RawInvoiceRow, 'sellerTaxId' | 'buyerTaxId'> {
+export interface HashedInvoiceRow extends Omit<RawInvoiceRow, 'sellerTaxId' | 'buyerTaxId'> {
   sellerHash: string;
   buyerHash: string;
 }
@@ -62,8 +62,6 @@ export interface CardRule {
 
 /**
  * 單張卡在推薦結果中的詳細欄位（供前端五區塊顯示）。
- * AI 即時查詢時會填齊 officialUrl / promotionPeriod / benefits / personalizedReason；
- * 本地 fallback 則限於資料庫現有欄位，部分欄位可能為 undefined。
  */
 export interface RecommendedCard {
   id?: string;
@@ -71,11 +69,14 @@ export interface RecommendedCard {
   issuer: string;
   annualFee?: number;
   feeWaiverRule?: string;
-  /** 官方介紹頁面 URL（由 AI 即時搜尋取得） */
+  /** 官方介紹頁面 URL（由 AI 即時搜尋取得；後端會驗證可達性） */
   officialUrl?: string;
   /** 線上申辦連結（若有） */
   applyUrl?: string;
-  /** 人類可讀的優惠期限說明，例：2026/01/01 – 2026/12/31，或「長期有效」 */
+  /** URL 驗證狀態註記（例如「銀行信用卡總覽頁」表示深連結驗證失敗 fallback） */
+  officialUrlNote?: string;
+  applyUrlNote?: string;
+  /** 人類可讀的優惠期限說明 */
   promotionPeriod?: string;
   /** 結構化優惠項目列表 */
   benefits?: Array<{
@@ -86,18 +87,15 @@ export interface RecommendedCard {
   }>;
   /** 針對本使用者消費結構的個人化推薦理由 */
   personalizedReason?: string;
-  /** 警語與提醒（如：頻繁上限、指定連鎖限定等） */
+  /** 警語與提醒 */
   warnings?: string[];
 }
 
 export interface CardCombination {
-  /** 推薦的卡片列表（含全部詳細欄位） */
   cards: RecommendedCard[];
-  /** 年化總回饋（未扱年費）；即時查詢時可能為 0 或 undefined */
   grossAnnualReward?: number;
   totalAnnualFee?: number;
   netAnnualReward?: number;
-  /** 組合層級的總體推薦理由（選填） */
   rationale?: string;
   warnings?: string[];
 }
