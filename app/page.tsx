@@ -96,7 +96,7 @@ export default function Page() {
           }}
         />
       )}
-      {result && <ResultPanel result={result} />}
+      {result && <ResultPanel result={result} aggregate={aggregate} />}
       <footer className="text-xs text-slate-500 text-center pt-10">
         本系統不儲存任何發票明細與個資，關閉頁面即釋放。
       </footer>
