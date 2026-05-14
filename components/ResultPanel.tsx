@@ -1,9 +1,11 @@
 'use client';
 
-import type { RecommendationResult, RecommendedCard } from '@/lib/types';
+import type { RecommendationResult, RecommendedCard, AggregatedInvoice } from '@/lib/types';
 
 export interface ResultPanelProps {
   result: RecommendationResult | null;
+  /** 第 12 次更新：選用，用於顯示分類覆蓋率橫條 */
+  aggregate?: AggregatedInvoice | null;
 }
 
 function CardBlock({ card, idx }: { card: RecommendedCard; idx: number }) {
@@ -107,7 +109,57 @@ function CardBlock({ card, idx }: { card: RecommendedCard; idx: number }) {
   );
 }
 
-export default function ResultPanel({ result }: ResultPanelProps) {
+/**
+ * 第 12 次更新：分類覆蓋率橫條
+ * coveredShare = 1 - otherShare；分三級顯示綠 / 黃 / 橘色橫條。
+ */
+function CoverageBanner({ aggregate }: { aggregate: AggregatedInvoice }) {
+  const otherCat = (aggregate.categories || []).find((c) => c.category === '其他');
+  const otherShare = typeof otherCat?.share === 'number' ? otherCat.share : 0;
+  const coveredShare = Math.max(0, Math.min(1, 1 - otherShare));
+  const pct = Math.round(coveredShare * 100);
+
+  // 前 3 大「已識別」類別
+  const knownCats = (aggregate.categories || [])
+    .filter((c) => c.category !== '其他')
+    .slice(0, 3);
+
+  let level: 'high' | 'mid' | 'low';
+  let style = '';
+  let label = '';
+  if (coveredShare >= 0.7) {
+    level = 'high';
+    style = 'border-emerald-300 bg-emerald-50 text-emerald-800';
+    label = `✓ 分類覆蓋率 ${pct}%，推薦結果有充足的類別依據。`;
+  } else if (coveredShare >= 0.4) {
+    level = 'mid';
+    style = 'border-yellow-300 bg-yellow-50 text-yellow-800';
+    label = `◎ 分類覆蓋率 ${pct}%（偏低）。部分推薦理由將以總消費金額作為依據。`;
+  } else {
+    level = 'low';
+    style = 'border-orange-300 bg-orange-50 text-orange-800';
+    label = `⚠ 分類覆蓋率 ${pct}% 偏低。您消費的店家多數未在已知連鎖統編字典內，推薦精準度有限；建議手動比對銀行優惠。`;
+  }
+
+  return (
+    <div className={`p-3 rounded border text-sm ${style}`}>
+      <div className="font-medium">{label}</div>
+      {knownCats.length > 0 && (
+        <div className="mt-1 text-xs">
+          <span className="opacity-70">已識別主要類別：</span>
+          {knownCats.map((c, i) => (
+            <span key={i} className="ml-1">
+              {c.category} NTD {Math.round(c.monthlyAvg).toLocaleString('en-US')}/月
+              {i < knownCats.length - 1 ? '、' : ''}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function ResultPanel({ result, aggregate }: ResultPanelProps) {
   if (!result) {
     return (
       <div className="p-4 border rounded-lg bg-white text-sm text-gray-500">
@@ -124,6 +176,9 @@ export default function ResultPanel({ result }: ResultPanelProps) {
 
   return (
     <div className="space-y-4">
+      {/* 第 12 次更新：分類覆蓋率橫條（aggregate 有提供時顯示） */}
+      {aggregate && <CoverageBanner aggregate={aggregate} />}
+
       {/* 來源警示橫幅 */}
       {isFallback ? (
         <div className="p-3 rounded border border-amber-300 bg-amber-50 text-amber-800 text-sm">
