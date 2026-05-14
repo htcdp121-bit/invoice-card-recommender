@@ -6,6 +6,12 @@ import type { AggregatedInvoice, RecommendParams, CardRule } from '@/lib/types';
  *
  * 第 11 次更新（URL 反幻覺）：強制 officialUrl/applyUrl 只能用 Google Search
  * 結果裡真實出現過的網址；不確定深連結時必須降級到銀行信用卡總覽頁，禁止猜路徑。
+ *
+ * 第 12 次更新（其他類別防呆 + 卡片差異化）：
+ *  - 若使用者消費中「其他」類別佔比過高（>25%），表示分類資料不完整，
+ *    禁止以「你每月『其他』消費 NTD …」作為推薦理由的主訴求。
+ *  - 每張卡的 personalizedReason 必須引用一個「該卡獨有的特徵」，
+ *    避免多張卡片重複同一套句型。
  */
 export function buildSystemPrompt(): string {
   return [
@@ -16,6 +22,27 @@ export function buildSystemPrompt(): string {
     '2. 只採用「現在仍在有效或明文有公告期限」的優惠；若查不到期限，註「長期有效」或「以官網公告為準」。',
     '3. 推薦 3～5 張不同類別互補的卡片，以使用者的消費占比為依據。',
     '4. 每張卡都要針對使用者的具體消費類別與金額，寫出「為什麼推薦給你」的個人化原因。',
+    '',
+    '【「其他」類別防呆規則 — 重要】',
+    'X1. 使用者資料中的「其他」類別 = 未能歸類到任何已知行業的殘餘交易。它的金額沒有實際商業意義。',
+    'X2. 若 features.otherShare > 0.25（即「其他」佔總消費 > 25%），代表使用者實際消費的店家有大量未進入我們的統編字典；',
+    '    此時請「不要」把「其他」當成推薦主軸，請改用下列替代訊號：',
+    '    - monthlyAvgSpend：使用者每月總消費（推薦無腦回饋率高、無上限的主力卡）',
+    '    - 海外消費比例（categories[*].channelMix.foreign）：若 > 10%，加推一張海外回饋卡',
+    '    - 線上消費比例（categories[*].channelMix.online）：若 > 20%，加推一張網購／行動支付卡',
+    '    - 已能識別的前 2～3 個非「其他」類別：以這些為主訴求',
+    'X3. 即使「其他」是金額最大類別，也禁止在 personalizedReason 中寫「針對您每月『其他』消費 NTD …」這種句型；',
+    '    應改寫為「依您每月總消費 NTD … 與多元通路使用情境…」之類的說法。',
+    '',
+    '【卡片差異化規則 — 重要】',
+    'Y1. 每張卡的 personalizedReason 必須明確引用「該卡獨有的賣點」其中之一，例如：',
+    '    - 等級／任務型卡：強調「升級到 X 等級可達 N% 回饋」',
+    '    - 方案切換型卡（CUBE、Richart）：強調「可依當月消費通路切換方案」',
+    '    - 無上限回饋型卡：強調「回饋無上限，適合大額或不確定通路」',
+    '    - 高海外回饋卡：強調「海外消費 N% 回饋」',
+    '    - 數位帳戶綁定卡（DAWHO）：強調「綁定數位帳戶」',
+    'Y2. 兩張不同卡的 personalizedReason 句首結構不可雷同；不可重複「針對您每月 NTD … 的『X』消費」這個模板。',
+    'Y3. 推薦理由請避免空泛的「無腦刷」這類沒有資訊量的詞，除非確實是該卡核心定位。',
     '',
     '【官方連結（officialUrl / applyUrl）最嚴格規範 — 違反將被視為錯誤】',
     'A. officialUrl 與 applyUrl 必須是你在本次 Google Search 工具呼叫中「真實點開過、且實際存在」的網址；',
@@ -49,7 +76,7 @@ export function buildSystemPrompt(): string {
     '          "benefits": [',
     '            { "title": "餐飲 5% 回饋", "detail": "...", "cap": "每月最高 500 點", "requirement": "需達低消金額" }',
     '          ],',
-    '          "personalizedReason": "針對使用者類別與金額的推薦理由",',
+    '          "personalizedReason": "符合 Y1/Y2 規則的個人化理由",',
     '          "warnings": ["需注意的限制"]',
     '        }',
     '      ],',
@@ -64,6 +91,7 @@ export function buildSystemPrompt(): string {
 
 /**
  * 使用者提示。包含：消費總覽、前三大類別金額、參數限制、本地資料庫現有卡片參考。
+ * 第 12 次更新：額外計算 otherShare 並在 prompt 中明示，供 X 規則使用。
  */
 export function buildUserPrompt(
   agg: AggregatedInvoice,
@@ -86,16 +114,27 @@ export function buildUserPrompt(
     })),
   };
 
-  const topCats = summary.categories
-    .slice(0, 3)
-    .map((c) => `「${c.category}」 每月 NTD ${c.monthlyAvg.toLocaleString('en-US')}`)
-    .join('、');
+  // 計算「其他」類別佔比，若 > 0.25 將觸發 X 規則
+  const otherCat = (agg.categories || []).find((c) => c.category === '其他');
+  const otherShare = Number(safe(otherCat?.share).toFixed(3));
+  const otherWarn = otherShare > 0.25
+    ? `${'\u26A0'} 其他類別佔比 ${(otherShare * 100).toFixed(1)}% 過高（>25%），請依 X1～X3 規則處理：不要把「其他」當推薦主訴求，改用 monthlyAvgSpend、海外比例、已識別類別作為理由訊號。`
+    : `其他類別佔比 ${(otherShare * 100).toFixed(1)}%（< 25%），可正常使用主類別作為推薦理由。`;
+
+  // 非「其他」的前 3 大類別
+  const nonOtherCats = summary.categories.filter((c) => c.category !== '其他').slice(0, 3);
+  const topCats = nonOtherCats.length > 0
+    ? nonOtherCats.map((c) => `「${c.category}」 每月 NTD ${c.monthlyAvg.toLocaleString('en-US')}`).join('、')
+    : '（前三大已知類別不足，請依 X 規則改用替代訊號）';
 
   return [
     '## 使用者消費摘要（已去識別化）',
     JSON.stringify(summary, null, 2),
     '',
-    `## 重點類別（推薦時請重點針對這些類別查詢最新優惠）：${topCats || '無'}`,
+    `## 其他類別狀況：otherShare = ${otherShare}`,
+    otherWarn,
+    '',
+    `## 重點類別（推薦時請重點針對這些類別查詢最新優惠）：${topCats}`,
     '',
     '## 參數',
     `- annualFeeBudget：${params.annualFeeBudget}（0 表不限）`,
@@ -110,9 +149,11 @@ export function buildUserPrompt(
     ),
     '',
     '## 任務',
-    '1) 使用 Google Search 查詢針對使用者前三大類別的台灣信用卡最新優惠（3～5 張不同類別互補的卡片）。',
+    '1) 使用 Google Search 查詢針對使用者前三大「已識別」類別的台灣信用卡最新優惠（3～5 張不同類別互補的卡片）。',
+    '   若 otherShare > 0.25，主要依賴 monthlyAvgSpend、海外比例、線上比例這類訊號決定卡片組合。',
     '2) 每張卡提供：name / issuer / annualFee / officialUrl / promotionPeriod / benefits[] / personalizedReason。',
-    '3) personalizedReason 必須引用使用者類別名與每月金額（例如：「你每月餐飲 NTD 6,000...」）。',
+    '3) personalizedReason 必須遵守 Y1～Y3 卡片差異化規則：每張卡必須引用該卡獨有的特徵，且兩張卡的句首結構不可雷同。',
+    '   嚴禁出現「針對您每月 NTD … 的『其他』消費」這種句型（違反 X3）。',
     '4) officialUrl 與 applyUrl 必須遵守系統指示的「最嚴格規範」：只能用 Google Search 真實顯示的網址；找不到該卡片深連結時務必降級到該銀行的信用卡總覽頁，絕對不可猜測組合 URL。',
     '5) 以本系統設定的 JSON 格式輸出。',
   ].join('\n');
