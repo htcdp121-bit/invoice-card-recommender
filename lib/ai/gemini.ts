@@ -19,6 +19,7 @@ function modelCandidates(): string[] {
 /**
  * 以 Google Search grounding 呼叫 Gemini，讓模型即時查詢台灣信用卡實際優惠。
  * 為避免 Vercel function 超時，最多嘗試 2 個模型，每個 1 次；重試限制在 timeout 內完成。
+ * 第 14 次更新：將 params.maxCards 傳入 buildSystemPrompt 作為硬指令。
  */
 export async function callGeminiRecommendation(
   agg: AggregatedInvoice,
@@ -34,7 +35,7 @@ export async function callGeminiRecommendation(
   const genAI = new GoogleGenerativeAI(apiKey);
   const userPrompt = buildUserPrompt(agg, params, cards);
   const candidates = modelCandidates();
-  console.log('[gemini] candidates=', candidates.join(','));
+  console.log('[gemini] candidates=', candidates.join(','), 'maxCards=', params.maxCards);
 
   let lastErr: unknown = new Error('No model attempted');
   for (let i = 0; i < candidates.length; i++) {
@@ -43,7 +44,7 @@ export async function callGeminiRecommendation(
       console.log(`[gemini] try ${modelName}`);
       const model = genAI.getGenerativeModel({
         model: modelName,
-        systemInstruction: buildSystemPrompt(),
+        systemInstruction: buildSystemPrompt(params.maxCards),
         generationConfig: { temperature: 0.4 },
         tools: [{ googleSearch: {} } as any],
       });
@@ -92,6 +93,8 @@ export async function callGeminiRecommendation(
         parsed.combinations.length,
         'sources=',
         sources.length,
+        'firstComboCards=',
+        parsed.combinations[0]?.cards?.length ?? 0,
       );
       return {
         combinations: parsed.combinations,
