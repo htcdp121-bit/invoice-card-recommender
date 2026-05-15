@@ -8,19 +8,24 @@ import type { AggregatedInvoice, RecommendParams, CardRule } from '@/lib/types';
  * 結果裡真實出現過的網址；不確定深連結時必須降級到銀行信用卡總覽頁，禁止猜路徑。
  *
  * 第 12 次更新（其他類別防呆 + 卡片差異化）：
- *  - 若使用者消費中「其他」類別佔比過高（>25%），表示分類資料不完整，
- *    禁止以「你每月『其他』消費 NTD …」作為推薦理由的主訴求。
- *  - 每張卡的 personalizedReason 必須引用一個「該卡獨有的特徵」，
- *    避免多張卡片重複同一套句型。
+ * - 若使用者消費中「其他」類別佔比過高（>25%），表示分類資料不完整，
+ *   禁止以「你每月『其他』消費 NTD …」作為推薦理由的主訴求。
+ * - 每張卡的 personalizedReason 必須引用一個「該卡獨有的特徵」，
+ *   避免多張卡片重複同一套句型。
+ *
+ * 第 14 次更新（推卡數量硬指令）：
+ * - 將「推薦 3～5 張」改為依 maxCards 參數，必須剛好 maxCards 張（除非該銀行市場無足夠互補卡片可選）。
+ * - 加入 Y4 規則：類別訊號不足時用「強項互補」原則填滿。
  */
-export function buildSystemPrompt(): string {
+export function buildSystemPrompt(maxCards: number = 5): string {
+  const target = Math.max(1, Math.min(10, Math.floor(maxCards)));
   return [
     '你是一位專業的台灣信用卡推薦顧問。你的任務是依據使用者的消費結構，推薦「當期最新」的台灣信用卡。',
     '',
     '【必要步驟】',
     '1. 使用 Google Search 工具查詢使用者前三大類別的「台灣信用卡最新優惠」，例如：「2026 台灣餐飲回饋信用卡推薦」、「台灣網購回饋信用卡 2026」等。',
     '2. 只採用「現在仍在有效或明文有公告期限」的優惠；若查不到期限，註「長期有效」或「以官網公告為準」。',
-    '3. 推薦 3～5 張不同類別互補的卡片，以使用者的消費占比為依據。',
+    `3. 必須推薦剛好 ${target} 張不同類別互補的卡片，以使用者的消費占比為依據。少於 ${target} 張被視為錯誤輸出（除非市場上明顯找不到第 ${target} 張可互補的卡，這種情況請於 combinations[0].warnings 內明確說明原因）。`,
     '4. 每張卡都要針對使用者的具體消費類別與金額，寫出「為什麼推薦給你」的個人化原因。',
     '',
     '【「其他」類別防呆規則 — 重要】',
@@ -43,6 +48,13 @@ export function buildSystemPrompt(): string {
     '    - 數位帳戶綁定卡（DAWHO）：強調「綁定數位帳戶」',
     'Y2. 兩張不同卡的 personalizedReason 句首結構不可雷同；不可重複「針對您每月 NTD … 的『X』消費」這個模板。',
     'Y3. 推薦理由請避免空泛的「無腦刷」這類沒有資訊量的詞，除非確實是該卡核心定位。',
+    `Y4. 若使用者類別訊號不足以差異化 ${target} 張卡（例如 otherShare > 0.5 或非「其他」類別 < 3 個），請依「強項互補」原則填滿到 ${target} 張：`,
+    '    (a) 1 張主力高回饋／無上限卡（保底）',
+    '    (b) 1 張數位帳戶綁定 / 高任務回饋卡（追求最高回饋者）',
+    '    (c) 1 張海外或外幣回饋卡（若 includeForeign=true）',
+    '    (d) 1 張行動支付 / 線上購物加碼卡',
+    '    (e) 1 張方案切換型彈性卡（如 CUBE、樂天玉山 Pi 拍）',
+    '    每張仍需給出獨立的 personalizedReason，並符合 Y1～Y3。',
     '',
     '【官方連結（officialUrl / applyUrl）最嚴格規範 — 違反將被視為錯誤】',
     'A. officialUrl 與 applyUrl 必須是你在本次 Google Search 工具呼叫中「真實點開過、且實際存在」的網址；',
@@ -92,6 +104,7 @@ export function buildSystemPrompt(): string {
 /**
  * 使用者提示。包含：消費總覽、前三大類別金額、參數限制、本地資料庫現有卡片參考。
  * 第 12 次更新：額外計算 otherShare 並在 prompt 中明示，供 X 規則使用。
+ * 第 14 次更新：強化 maxCards 為「目標數量」而非上限。
  */
 export function buildUserPrompt(
   agg: AggregatedInvoice,
@@ -127,6 +140,8 @@ export function buildUserPrompt(
     ? nonOtherCats.map((c) => `「${c.category}」 每月 NTD ${c.monthlyAvg.toLocaleString('en-US')}`).join('、')
     : '（前三大已知類別不足，請依 X 規則改用替代訊號）';
 
+  const target = Math.max(1, Math.min(10, Math.floor(params.maxCards || 5)));
+
   return [
     '## 使用者消費摘要（已去識別化）',
     JSON.stringify(summary, null, 2),
@@ -138,7 +153,7 @@ export function buildUserPrompt(
     '',
     '## 參數',
     `- annualFeeBudget：${params.annualFeeBudget}（0 表不限）`,
-    `- maxCards：${params.maxCards}`,
+    `- maxCards：${params.maxCards}  ← 這是「目標數量」，請務必推薦剛好這麼多張，不可少。`,
     `- horizonMonths：${params.horizonMonths}`,
     `- includeForeign：${params.includeForeign}`,
     `- riskAversion：${params.riskAversion}`,
@@ -149,12 +164,13 @@ export function buildUserPrompt(
     ),
     '',
     '## 任務',
-    '1) 使用 Google Search 查詢針對使用者前三大「已識別」類別的台灣信用卡最新優惠（3～5 張不同類別互補的卡片）。',
-    '   若 otherShare > 0.25，主要依賴 monthlyAvgSpend、海外比例、線上比例這類訊號決定卡片組合。',
+    `1) 使用 Google Search 查詢針對使用者前三大「已識別」類別的台灣信用卡最新優惠，必須推薦剛好 ${target} 張不同類別互補的卡片。`,
+    '   若 otherShare > 0.25，主要依賴 monthlyAvgSpend、海外比例、線上比例這類訊號決定卡片組合，並依 Y4 規則用「強項互補」填滿。',
     '2) 每張卡提供：name / issuer / annualFee / officialUrl / promotionPeriod / benefits[] / personalizedReason。',
     '3) personalizedReason 必須遵守 Y1～Y3 卡片差異化規則：每張卡必須引用該卡獨有的特徵，且兩張卡的句首結構不可雷同。',
     '   嚴禁出現「針對您每月 NTD … 的『其他』消費」這種句型（違反 X3）。',
     '4) officialUrl 與 applyUrl 必須遵守系統指示的「最嚴格規範」：只能用 Google Search 真實顯示的網址；找不到該卡片深連結時務必降級到該銀行的信用卡總覽頁，絕對不可猜測組合 URL。',
-    '5) 以本系統設定的 JSON 格式輸出。',
+    `5) 最終 combinations[0].cards 的長度必須剛好為 ${target}；若市場上實在湊不到 ${target} 張可互補的卡，請於 combinations[0].warnings 寫明原因。`,
+    '6) 以本系統設定的 JSON 格式輸出。',
   ].join('\n');
 }
