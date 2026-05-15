@@ -163,7 +163,7 @@ export const TAXID_CATEGORY_MAP: Record<string, TaxIdClassification> = {
   '50815122': { category: '娛樂訂閱', channel: 'online' }, // myVideo
   '24566680': { category: '娛樂訂閱', channel: 'pos' }, // 威秀影城分公司
   '70807876': { category: '娛樂訂閱', channel: 'pos' }, // 國賓影城
-  '23086702': { category: '娛樂訂閱', channel: 'pos' }, // 秀泰影城
+  '28452301': { category: '娛樂訂閱', channel: 'pos' }, // 秀泰影城
 
   // ── 旅遊住宿 ──
   '03707901': { category: '旅遊住宿', channel: 'pos' }, // 長榮航空
